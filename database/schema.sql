@@ -1,11 +1,27 @@
--- Hyperliquid wallet tracker — SQLite schema
+-- Hyperliquid wallet tracker — SQLite schema (v2, multi-user)
+
+CREATE TABLE IF NOT EXISTS users (
+    chat_id             INTEGER PRIMARY KEY,          -- Telegram chat id
+    lang                TEXT NOT NULL DEFAULT 'en',   -- 'ru' / 'en'
+    min_position_usd    REAL NOT NULL DEFAULT 10000,
+    fill_agg_threshold  REAL NOT NULL DEFAULT 50000,
+    created_at          INTEGER NOT NULL              -- unix timestamp (sec)
+);
 
 CREATE TABLE IF NOT EXISTS wallets (
-    address     TEXT PRIMARY KEY,            -- 0x... lowercase
+    chat_id     INTEGER NOT NULL,
+    address     TEXT NOT NULL,               -- 0x... lowercase
     label       TEXT NOT NULL,
     active      INTEGER NOT NULL DEFAULT 1,  -- 1 = слежка вкл., 0 = пауза
-    added_at    INTEGER NOT NULL             -- unix timestamp (sec)
+    added_at    INTEGER NOT NULL,            -- unix timestamp (sec)
+    PRIMARY KEY (chat_id, address)
 );
+
+CREATE INDEX IF NOT EXISTS idx_wallets_address
+    ON wallets(address);
+
+-- positions / orders / history — глобальные факты об адресе,
+-- дедуплицируются между юзерами, подписанными на один и тот же кошелёк.
 
 CREATE TABLE IF NOT EXISTS positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,8 +35,7 @@ CREATE TABLE IF NOT EXISTS positions (
     opened_at       INTEGER NOT NULL,
     closed_at       INTEGER,
     close_price     REAL,
-    pnl             REAL,
-    FOREIGN KEY (wallet) REFERENCES wallets(address)
+    pnl             REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_positions_wallet

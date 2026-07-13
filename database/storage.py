@@ -1,7 +1,9 @@
-"""Async SQLite storage for wallets, positions, orders, history."""
+"""Async SQLite storage for users, wallets, positions, orders, history."""
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,9 +11,21 @@ from typing import Any, Optional
 
 import aiosqlite
 
+log = logging.getLogger("db")
+
+
+@dataclass
+class User:
+    chat_id: int
+    lang: str
+    min_position_usd: float
+    fill_agg_threshold: float
+    created_at: int
+
 
 @dataclass
 class Wallet:
+    chat_id: int
     address: str
     label: str
     active: bool
@@ -60,79 +74,235 @@ class Storage:
         self.db_path = db_path
         self.schema_path = schema_path
 
-    async def init(self) -> None:
-        """Create database file & schema if missing."""
+    async def init(self, legacy_owner_chat_id: int = 0) -> None:
+        """Create database file & schema if missing; migrate v1 -> v2 if needed.
+
+        ``legacy_owner_chat_id`` — chat_id, которому приписываются кошельки
+        из старой single-user схемы (обычно ADMIN_CHAT_ID).
+        """
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        await self._migrate_if_needed(legacy_owner_chat_id)
         async with aiosqlite.connect(self.db_path) as db:
             with open(self.schema_path, "r", encoding="utf-8") as f:
                 await db.executescript(f.read())
             await db.commit()
 
+    async def _migrate_if_needed(self, owner_chat_id: int) -> None:
+        """v1 (wallets without chat_id) -> v2 (multi-user)."""
+        if not Path(self.db_path).exists():
+            return
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("PRAGMA table_info(wallets)") as cur:
+                cols = [r[1] for r in await cur.fetchall()]
+            if not cols or "chat_id" in cols:
+                return  # fresh DB or already migrated
+
+            if not owner_chat_id:
+                raise RuntimeError(
+                    "DB migration v1->v2 requires ADMIN_CHAT_ID to assign "
+                    "existing wallets to the owner."
+                )
+
+            backup = f"{self.db_path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(self.db_path, backup)
+            log.info("Migrating DB to multi-user schema; backup: %s", backup)
+
+            await db.executescript(f"""
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS users (
+                    chat_id             INTEGER PRIMARY KEY,
+                    lang                TEXT NOT NULL DEFAULT 'en',
+                    min_position_usd    REAL NOT NULL DEFAULT 10000,
+                    fill_agg_threshold  REAL NOT NULL DEFAULT 50000,
+                    created_at          INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO users(chat_id, lang, created_at)
+                    VALUES ({owner_chat_id}, 'ru', {_now()});
+                CREATE TABLE wallets_v2 (
+                    chat_id     INTEGER NOT NULL,
+                    address     TEXT NOT NULL,
+                    label       TEXT NOT NULL,
+                    active      INTEGER NOT NULL DEFAULT 1,
+                    added_at    INTEGER NOT NULL,
+                    PRIMARY KEY (chat_id, address)
+                );
+                INSERT INTO wallets_v2(chat_id, address, label, active, added_at)
+                    SELECT {owner_chat_id}, address, label, active, added_at
+                    FROM wallets;
+                DROP TABLE wallets;
+                ALTER TABLE wallets_v2 RENAME TO wallets;
+                CREATE INDEX IF NOT EXISTS idx_wallets_address
+                    ON wallets(address);
+                COMMIT;
+            """)
+            log.info("Migration done: wallets assigned to chat_id %d",
+                     owner_chat_id)
+
+    # ---------- USERS ----------
+
+    async def upsert_user(self, chat_id: int, lang: str = "en",
+                          min_position_usd: float = 10000,
+                          fill_agg_threshold: float = 50000) -> User:
+        """Create the user if missing; return the stored row either way."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR IGNORE INTO users
+                       (chat_id, lang, min_position_usd, fill_agg_threshold, created_at)
+                       VALUES(?,?,?,?,?)""",
+                (chat_id, lang, min_position_usd, fill_agg_threshold, _now()),
+            )
+            await db.commit()
+        user = await self.get_user(chat_id)
+        assert user is not None
+        return user
+
+    async def get_user(self, chat_id: int) -> Optional[User]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """SELECT chat_id, lang, min_position_usd, fill_agg_threshold,
+                          created_at FROM users WHERE chat_id=?""",
+                (chat_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return User(*row) if row else None
+
+    async def update_user_setting(self, chat_id: int, field: str,
+                                  value: Any) -> bool:
+        if field not in ("lang", "min_position_usd", "fill_agg_threshold"):
+            raise ValueError(f"unknown user setting: {field}")
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                f"UPDATE users SET {field}=? WHERE chat_id=?",
+                (value, chat_id),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def list_users(self) -> list[User]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """SELECT chat_id, lang, min_position_usd, fill_agg_threshold,
+                          created_at FROM users ORDER BY created_at"""
+            ) as cur:
+                rows = await cur.fetchall()
+        return [User(*r) for r in rows]
+
     # ---------- WALLETS ----------
 
-    async def add_wallet(self, address: str, label: str) -> bool:
+    async def add_wallet(self, chat_id: int, address: str, label: str) -> bool:
         address = address.lower()
         async with aiosqlite.connect(self.db_path) as db:
             try:
                 await db.execute(
-                    "INSERT INTO wallets(address,label,active,added_at) VALUES(?,?,1,?)",
-                    (address, label, _now()),
+                    """INSERT INTO wallets(chat_id,address,label,active,added_at)
+                       VALUES(?,?,?,1,?)""",
+                    (chat_id, address, label, _now()),
                 )
                 await db.commit()
                 return True
             except aiosqlite.IntegrityError:
                 return False
 
-    async def remove_wallet(self, address: str) -> bool:
+    async def remove_wallet(self, chat_id: int, address: str) -> bool:
         address = address.lower()
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
-                "DELETE FROM wallets WHERE address=?", (address,)
+                "DELETE FROM wallets WHERE chat_id=? AND address=?",
+                (chat_id, address),
             )
             await db.commit()
             return cur.rowcount > 0
 
-    async def rename_wallet(self, address: str, new_label: str) -> bool:
+    async def rename_wallet(self, chat_id: int, address: str,
+                            new_label: str) -> bool:
         address = address.lower()
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
-                "UPDATE wallets SET label=? WHERE address=?",
-                (new_label, address),
+                "UPDATE wallets SET label=? WHERE chat_id=? AND address=?",
+                (new_label, chat_id, address),
             )
             await db.commit()
             return cur.rowcount > 0
 
-    async def set_active(self, address: str, active: bool) -> bool:
+    async def set_active(self, chat_id: int, address: str,
+                         active: bool) -> bool:
         address = address.lower()
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
-                "UPDATE wallets SET active=? WHERE address=?",
-                (1 if active else 0, address),
+                "UPDATE wallets SET active=? WHERE chat_id=? AND address=?",
+                (1 if active else 0, chat_id, address),
             )
             await db.commit()
             return cur.rowcount > 0
 
-    async def list_wallets(self, only_active: bool = False) -> list[Wallet]:
-        sql = "SELECT address,label,active,added_at FROM wallets"
+    async def list_wallets(self, chat_id: int,
+                           only_active: bool = False) -> list[Wallet]:
+        sql = ("SELECT chat_id,address,label,active,added_at FROM wallets "
+               "WHERE chat_id=?")
         if only_active:
-            sql += " WHERE active=1"
+            sql += " AND active=1"
         sql += " ORDER BY added_at"
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(sql) as cur:
+            async with db.execute(sql, (chat_id,)) as cur:
                 rows = await cur.fetchall()
-        return [Wallet(r[0], r[1], bool(r[2]), r[3]) for r in rows]
+        return [Wallet(r[0], r[1], r[2], bool(r[3]), r[4]) for r in rows]
 
-    async def get_wallet(self, address: str) -> Optional[Wallet]:
+    async def get_wallet(self, chat_id: int, address: str) -> Optional[Wallet]:
         address = address.lower()
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
-                "SELECT address,label,active,added_at FROM wallets WHERE address=?",
-                (address,),
+                """SELECT chat_id,address,label,active,added_at FROM wallets
+                   WHERE chat_id=? AND address=?""",
+                (chat_id, address),
             ) as cur:
                 row = await cur.fetchone()
         if not row:
             return None
-        return Wallet(row[0], row[1], bool(row[2]), row[3])
+        return Wallet(row[0], row[1], row[2], bool(row[3]), row[4])
+
+    async def count_wallets(self, chat_id: int) -> int:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM wallets WHERE chat_id=?", (chat_id,)
+            ) as cur:
+                row = await cur.fetchone()
+        return int(row[0])
+
+    async def wallet_subscribers(self, address: str) -> list[Wallet]:
+        """All users actively tracking the address (for event fan-out)."""
+        address = address.lower()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """SELECT chat_id,address,label,active,added_at FROM wallets
+                   WHERE address=? AND active=1""",
+                (address,),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [Wallet(r[0], r[1], r[2], bool(r[3]), r[4]) for r in rows]
+
+    async def list_active_subscriptions(self) -> list[Wallet]:
+        """Every active (user, wallet) pair — to rebuild routing on startup."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """SELECT chat_id,address,label,active,added_at FROM wallets
+                   WHERE active=1 ORDER BY added_at"""
+            ) as cur:
+                rows = await cur.fetchall()
+        return [Wallet(r[0], r[1], r[2], bool(r[3]), r[4]) for r in rows]
+
+    async def count_stats(self) -> dict:
+        """Aggregate counters for /admin."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM users") as cur:
+                users = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM wallets") as cur:
+                wallets = (await cur.fetchone())[0]
+            async with db.execute(
+                "SELECT COUNT(DISTINCT address) FROM wallets WHERE active=1"
+            ) as cur:
+                unique_active = (await cur.fetchone())[0]
+        return {"users": users, "wallets": wallets,
+                "unique_active_addresses": unique_active}
 
     # ---------- POSITIONS ----------
 

@@ -29,7 +29,8 @@ from bot.formatter import (
     short_addr,
 )
 from bot.handlers import Handlers
-from database.storage import Order, Position, Storage
+from bot.users import UserService
+from database.storage import Order, Position, Storage, User
 from hl_monitor.client import HyperliquidWS
 from hl_monitor.detector import AnomalyDetector
 from hl_monitor.parser import FillEvent, OrderEvent, PositionEvent
@@ -65,20 +66,21 @@ class Bot:
 
     def __init__(self):
         self.storage = Storage(config.DB_PATH, config.SCHEMA_PATH)
-        self.detector = AnomalyDetector(
-            window_sec=config.ANOMALY_TIME_WINDOW,
-            min_wallets=config.ANOMALY_MIN_WALLETS,
-        )
-        self.labels: dict[str, str] = {}  # address -> label
+        self.users = UserService(self.storage)
 
-        # Unrealized PnL cache: {wallet: {coin: unrealized_pnl}}
-        self.unrealized_pnl: dict[str, dict[str, float]] = {}
+        # per-user anomaly detectors (each user watches their own whale set)
+        self.detectors: dict[int, AnomalyDetector] = {}
+
+        # routing: address -> {chat_id: label}
+        self.subscribers: dict[str, dict[int, str]] = {}
+        # (chat_id, address) -> label
+        self.labels: dict[tuple[int, str], str] = {}
 
         # Recent fills cache for exact PnL: {wallet: {coin: closed_pnl}}
         self._fill_pnl: dict[str, dict[str, float]] = {}
 
-        # Fill aggregation: {(wallet, coin): {count, total_size, total_notional, ...}}
-        self._fill_agg: dict[tuple[str, str], dict] = {}
+        # Fill aggregation: {(chat_id, wallet, coin, side): {count, ...}}
+        self._fill_agg: dict[tuple[int, str, str, str], dict] = {}
 
         # Rate limiter: simple semaphore for Telegram sends
         self._send_semaphore = asyncio.Semaphore(20)
@@ -100,25 +102,48 @@ class Bot:
         self._flush_task: asyncio.Task | None = None
         self._stop_flush = asyncio.Event()
 
+    def _detector(self, chat_id: int) -> AnomalyDetector:
+        det = self.detectors.get(chat_id)
+        if det is None:
+            det = AnomalyDetector(
+                window_sec=config.ANOMALY_TIME_WINDOW,
+                min_wallets=config.ANOMALY_MIN_WALLETS,
+            )
+            self.detectors[chat_id] = det
+        return det
+
+    def _user_labels(self, chat_id: int) -> dict[str, str]:
+        return {addr: lbl for (cid, addr), lbl in self.labels.items()
+                if cid == chat_id}
+
     # ------------------------------------------------------------------
-    #  Notifications back to user
+    #  Notifications back to users
     # ------------------------------------------------------------------
 
-    async def _send(self, text: str) -> None:
-        if not self.tg_app or not config.MY_CHAT_ID:
-            log.info("[notify] %s", text.replace("\n", " | "))
+    async def _send(self, chat_id: int, text: str) -> None:
+        if not self.tg_app or not chat_id:
+            log.info("[notify:%s] %s", chat_id, text.replace("\n", " | "))
             return
         async with self._send_semaphore:
             try:
                 await self.tg_app.bot.send_message(
-                    chat_id=config.MY_CHAT_ID,
+                    chat_id=chat_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True,
                 )
             except Exception as e:
-                log.warning("Failed to send tg message: %s", e)
+                log.warning("Failed to send tg message to %s: %s", chat_id, e)
             await asyncio.sleep(0.05)
+
+    async def _subscribers_of(self, wallet: str) -> list[tuple[User, str]]:
+        """(user, label) pairs subscribed to the wallet, with settings."""
+        result = []
+        for chat_id, label in (self.subscribers.get(wallet) or {}).items():
+            user = await self.users.get(chat_id)
+            if user:
+                result.append((user, label or short_addr(wallet)))
+        return result
 
     # ------------------------------------------------------------------
     #  WebSocket -> Telegram pipeline
@@ -126,18 +151,9 @@ class Bot:
 
     async def _on_position_event(self, ev: PositionEvent) -> None:
         wallet = ev.wallet.lower()
-        label = self.labels.get(wallet) or short_addr(wallet)
-
-        if config.MIN_POSITION_USD and ev.notional < config.MIN_POSITION_USD:
+        subs = await self._subscribers_of(wallet)
+        if not subs:
             return
-
-        # For scale events also require the *change* to clear the threshold —
-        # otherwise a $37K position growing by $400 would spam the chat.
-        if ev.kind == "scale":
-            prev_notional = ev.pnl or 0.0
-            delta = abs(ev.notional - prev_notional)
-            if config.MIN_POSITION_USD and delta < config.MIN_POSITION_USD:
-                return
 
         if ev.kind == "open":
             try:
@@ -155,14 +171,21 @@ class Bot:
             except Exception:
                 log.exception("DB open_position failed")
 
-            await self._send(format_position_open(ev, label))
-
-            hit = self.detector.record_open(
-                wallet=wallet, label=label, coin=ev.coin,
-                side=ev.side, notional=ev.notional,
-            )
-            if hit:
-                await self._send(format_anomaly(hit, self.labels))
+            for user, label in subs:
+                if user.min_position_usd and ev.notional < user.min_position_usd:
+                    continue
+                await self._send(user.chat_id,
+                                 format_position_open(user.lang, ev, label))
+                hit = self._detector(user.chat_id).record_open(
+                    wallet=wallet, label=label, coin=ev.coin,
+                    side=ev.side, notional=ev.notional,
+                )
+                if hit:
+                    await self._send(
+                        user.chat_id,
+                        format_anomaly(user.lang, hit,
+                                       self._user_labels(user.chat_id)),
+                    )
 
         elif ev.kind == "close":
             try:
@@ -183,66 +206,86 @@ class Bot:
             except Exception:
                 log.exception("DB close_position failed")
 
-            self.unrealized_pnl.get(wallet, {}).pop(ev.coin, None)
-            await self._send(format_position_close(ev, label))
+            for user, label in subs:
+                if user.min_position_usd and ev.notional < user.min_position_usd:
+                    continue
+                await self._send(user.chat_id,
+                                 format_position_close(user.lang, ev, label))
 
         elif ev.kind == "scale":
             prev_size = ev.close_price or ev.size  # overloaded in diff
             prev_notional = ev.pnl or ev.notional  # overloaded in diff
-            await self._send(format_position_scaled(
-                ev, label, prev_size, prev_notional,
-            ))
+            delta = abs(ev.notional - prev_notional)
             await self.storage.add_history(
                 wallet, "scale", ev.coin, ev.side,
                 {"size": ev.size, "notional": ev.notional,
                  "entry": ev.entry_price},
             )
+            for user, label in subs:
+                if user.min_position_usd and ev.notional < user.min_position_usd:
+                    continue
+                # For scale events also require the *change* to clear the
+                # threshold — otherwise a $37K position growing by $400
+                # would spam the chat.
+                if user.min_position_usd and delta < user.min_position_usd:
+                    continue
+                await self._send(
+                    user.chat_id,
+                    format_position_scaled(user.lang, ev, label,
+                                           prev_size, prev_notional),
+                )
 
     async def _on_fill_event(self, ev: FillEvent) -> None:
         wallet = ev.wallet.lower()
         if ev.closed_pnl != 0:
             wallet_fills = self._fill_pnl.setdefault(wallet, {})
             wallet_fills[ev.coin] = wallet_fills.get(ev.coin, 0) + ev.closed_pnl
-        self.unrealized_pnl.setdefault(wallet, {})
+
+        subs = await self._subscribers_of(wallet)
+        if not subs:
+            return
 
         notional = ev.size * ev.price
         now = int(time.time())
-        # Aggregation is keyed by (wallet, coin, side) so BUY-into-LONG and
-        # SELL-out-of-LONG don't share a buffer.
-        key = (wallet, ev.coin, ev.side)
-        agg = self._fill_agg.get(key)
-        if agg is None:
-            agg = {
-                "wallet": wallet, "coin": ev.coin, "side": ev.side,
-                "count": 0, "total_size": 0.0, "total_notional": 0.0,
-                "total_pnl": 0.0, "total_fee": 0.0, "avg_price": 0.0,
-                "open_fills": 0, "close_fills": 0,
-                "open_notional": 0.0, "close_notional": 0.0,
-                "first_ts": ev.timestamp or now,
-                "last_ts": ev.timestamp or now,
-            }
-            self._fill_agg[key] = agg
+        for user, label in subs:
+            # Aggregation is keyed by (user, wallet, coin, side) so BUY-into-
+            # LONG and SELL-out-of-LONG don't share a buffer, and each user
+            # accumulates toward their own threshold.
+            key = (user.chat_id, wallet, ev.coin, ev.side)
+            agg = self._fill_agg.get(key)
+            if agg is None:
+                agg = {
+                    "wallet": wallet, "coin": ev.coin, "side": ev.side,
+                    "count": 0, "total_size": 0.0, "total_notional": 0.0,
+                    "total_pnl": 0.0, "total_fee": 0.0, "avg_price": 0.0,
+                    "open_fills": 0, "close_fills": 0,
+                    "open_notional": 0.0, "close_notional": 0.0,
+                    "first_ts": ev.timestamp or now,
+                    "last_ts": ev.timestamp or now,
+                }
+                self._fill_agg[key] = agg
 
-        agg["count"] += 1
-        agg["total_size"] += ev.size
-        agg["total_notional"] += notional
-        agg["total_pnl"] += ev.closed_pnl
-        agg["total_fee"] += ev.fee
-        agg["last_ts"] = ev.timestamp or now
-        if ev.closed_pnl != 0:
-            agg["close_fills"] += 1
-            agg["close_notional"] += notional
-        else:
-            agg["open_fills"] += 1
-            agg["open_notional"] += notional
-        if agg["total_size"]:
-            agg["avg_price"] = agg["total_notional"] / agg["total_size"]
+            agg["count"] += 1
+            agg["total_size"] += ev.size
+            agg["total_notional"] += notional
+            agg["total_pnl"] += ev.closed_pnl
+            agg["total_fee"] += ev.fee
+            agg["last_ts"] = ev.timestamp or now
+            if ev.closed_pnl != 0:
+                agg["close_fills"] += 1
+                agg["close_notional"] += notional
+            else:
+                agg["open_fills"] += 1
+                agg["open_notional"] += notional
+            if agg["total_size"]:
+                agg["avg_price"] = agg["total_notional"] / agg["total_size"]
 
-        if agg["total_notional"] >= config.FILL_AGG_THRESHOLD:
-            self._attach_position_avg(agg)
-            label = self.labels.get(wallet) or short_addr(wallet)
-            await self._send(format_fills_aggregated(agg, label))
-            del self._fill_agg[key]
+            if agg["total_notional"] >= user.fill_agg_threshold:
+                self._attach_position_avg(agg)
+                await self._send(
+                    user.chat_id,
+                    format_fills_aggregated(user.lang, agg, label))
+                del self._fill_agg[key]
 
     def _attach_position_avg(self, agg: dict) -> None:
         """Look up the live position snapshot to enrich agg with avg entry."""
@@ -264,25 +307,35 @@ class Bot:
             else:
                 return
             now = int(time.time())
-            stale = [
-                k for k, a in self._fill_agg.items()
-                if now - a["last_ts"] > config.FILL_AGG_FLUSH_SEC
-                and a["total_notional"] >= config.FILL_AGG_THRESHOLD
-            ]
+            stale: list[tuple[int, str, str, str]] = []
+            for k, a in self._fill_agg.items():
+                if now - a["last_ts"] <= config.FILL_AGG_FLUSH_SEC:
+                    continue
+                user = await self.users.get(k[0])
+                if user and a["total_notional"] >= user.fill_agg_threshold:
+                    stale.append(k)
             for k in stale:
                 agg = self._fill_agg.pop(k, None)
                 if not agg:
                     continue
                 self._attach_position_avg(agg)
-                wallet = agg["wallet"]
-                label = self.labels.get(wallet) or short_addr(wallet)
+                chat_id, wallet = k[0], k[1]
+                user = await self.users.get(chat_id)
+                if not user:
+                    continue
+                label = (self.labels.get((chat_id, wallet))
+                         or short_addr(wallet))
                 try:
-                    await self._send(format_fills_aggregated(agg, label))
+                    await self._send(
+                        chat_id,
+                        format_fills_aggregated(user.lang, agg, label))
                 except Exception:
                     log.exception("flush send failed")
 
     async def _on_order_event(self, ev: OrderEvent) -> None:
         wallet = ev.wallet.lower()
+        if wallet not in self.subscribers:
+            return
 
         if ev.kind == "placed":
             is_new, _ = await self.storage.upsert_order(Order(
@@ -311,34 +364,52 @@ class Bot:
                 )
 
     # ------------------------------------------------------------------
-    #  WS subscription bridge for handlers
+    #  WS subscription bridge for handlers (refcounted per address)
     # ------------------------------------------------------------------
 
-    async def _subscribe_active(self, addr: str, label: str) -> None:
-        await self.ws.add_wallet(addr, label)
+    async def _subscribe_active(self, chat_id: int, addr: str,
+                                label: str) -> None:
+        addr = addr.lower()
+        first = addr not in self.subscribers
+        self.subscribers.setdefault(addr, {})[chat_id] = label
+        self.labels[(chat_id, addr)] = label
+        if first:
+            await self.ws.add_wallet(addr, label)
 
-    async def _unsubscribe(self, addr: str) -> None:
-        await self.ws.remove_wallet(addr)
+    async def _unsubscribe(self, chat_id: int, addr: str) -> None:
+        addr = addr.lower()
+        subs = self.subscribers.get(addr)
+        if subs:
+            subs.pop(chat_id, None)
+            if not subs:
+                del self.subscribers[addr]
+                await self.ws.remove_wallet(addr)
+        self.labels.pop((chat_id, addr), None)
+        # drop this user's pending aggregation buffers for the address
+        for k in [k for k in self._fill_agg
+                  if k[0] == chat_id and k[1] == addr]:
+            del self._fill_agg[k]
 
     # ------------------------------------------------------------------
     #  Lifecycle
     # ------------------------------------------------------------------
 
     async def setup(self) -> None:
-        await self.storage.init()
+        await self.storage.init(legacy_owner_chat_id=config.ADMIN_CHAT_ID)
 
-        # restore active wallets from DB
-        for w in await self.storage.list_wallets(only_active=True):
-            self.labels[w.address] = w.label
-            await self.ws.add_wallet(w.address, w.label)
-        # remember labels of paused too — для показа в /list
-        for w in await self.storage.list_wallets():
-            self.labels.setdefault(w.address, w.label)
+        # restore active (user, wallet) pairs from DB
+        for w in await self.storage.list_active_subscriptions():
+            first = w.address not in self.subscribers
+            self.subscribers.setdefault(w.address, {})[w.chat_id] = w.label
+            self.labels[(w.chat_id, w.address)] = w.label
+            if first:
+                await self.ws.add_wallet(w.address, w.label)
 
         # build telegram app
         self.tg_app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
         h = Handlers(
             storage=self.storage,
+            users=self.users,
             ws_subscribe=self._subscribe_active,
             ws_unsubscribe=self._unsubscribe,
             labels=self.labels,
@@ -349,6 +420,8 @@ class Bot:
         app.add_handler(CommandHandler("start", h.start))
         app.add_handler(CommandHandler("help", h.help_cmd))
         app.add_handler(CommandHandler("menu", h.menu))
+        app.add_handler(CommandHandler("settings", h.settings))
+        app.add_handler(CommandHandler("admin", h.admin))
         app.add_handler(CommandHandler("add", h.add))
         app.add_handler(CommandHandler("remove", h.remove))
         app.add_handler(CommandHandler("list", h.list_cmd))
@@ -386,7 +459,8 @@ class Bot:
                     await asyncio.sleep(5)
                 else:
                     raise
-        log.info("Bot started. Listening for %d chat_id only.", config.MY_CHAT_ID)
+        log.info("Bot started (multi-user). Tracking %d addresses.",
+                 len(self.subscribers))
 
         # wait until SIGINT/SIGTERM
         stop_event = asyncio.Event()
@@ -437,9 +511,11 @@ def _validate_config() -> None:
         raise SystemExit(
             "TELEGRAM_TOKEN не задан. Положите его в .env или переменные окружения."
         )
-    if not config.MY_CHAT_ID:
+    if not config.ADMIN_CHAT_ID:
         raise SystemExit(
-            "MY_CHAT_ID не задан. Узнайте свой chat_id у @userinfobot и пропишите его."
+            "ADMIN_CHAT_ID не задан. Узнайте свой chat_id у @userinfobot и "
+            "пропишите его в .env (это админ бота и владелец кошельков при "
+            "миграции со старой версии)."
         )
 
 

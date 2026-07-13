@@ -1,4 +1,4 @@
-"""Telegram message formatters (HTML parse mode)."""
+"""Telegram message formatters (HTML parse mode). All texts via i18n."""
 from __future__ import annotations
 
 import html
@@ -8,98 +8,110 @@ from typing import Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import config
-from database.storage import Order, Position, Wallet
+from bot.i18n import duration_units, month_name, t
+from database.storage import Position, Wallet
 from hl_monitor.detector import AnomalyHit
 from hl_monitor.parser import OrderEvent, PositionEvent, PositionSnapshot
 
 
 # ---------------------------------------------------------------------------
-#  inline keyboard
+#  inline keyboards
 # ---------------------------------------------------------------------------
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Кошельки", callback_data="m:wallets")],
-        [InlineKeyboardButton("📈 Позиции", callback_data="m:positions"),
-         InlineKeyboardButton("🎯 Ордера", callback_data="m:orders")],
-        [InlineKeyboardButton("📊 TWAP", callback_data="m:twap"),
-         InlineKeyboardButton("📊 Статистика", callback_data="m:stats_menu")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="m:help")],
+        [InlineKeyboardButton(t(lang, "btn.wallets"), callback_data="m:wallets")],
+        [InlineKeyboardButton(t(lang, "btn.positions"), callback_data="m:positions"),
+         InlineKeyboardButton(t(lang, "btn.orders"), callback_data="m:orders")],
+        [InlineKeyboardButton(t(lang, "btn.twap"), callback_data="m:twap"),
+         InlineKeyboardButton(t(lang, "btn.stats"), callback_data="m:stats_menu")],
+        [InlineKeyboardButton(t(lang, "btn.settings"), callback_data="m:settings"),
+         InlineKeyboardButton(t(lang, "btn.help"), callback_data="m:help")],
     ])
 
 
-def back_to_menu_keyboard() -> InlineKeyboardMarkup:
+def back_to_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="m:menu")],
+        [InlineKeyboardButton(t(lang, "btn.main_menu"), callback_data="m:menu")],
     ])
 
 
-def wallets_list_keyboard(wallets: list) -> InlineKeyboardMarkup:
+def wallets_list_keyboard(lang: str, wallets: list) -> InlineKeyboardMarkup:
     rows = []
     for w in wallets:
         em = "🟢" if w.active else "⏸"
         rows.append([InlineKeyboardButton(
             f"{em} {w.label}", callback_data=f"w:{w.address}")])
     rows.append([
-        InlineKeyboardButton("➕ Добавить кошелёк", callback_data="m:add"),
+        InlineKeyboardButton(t(lang, "btn.add_wallet"), callback_data="m:add"),
     ])
     rows.append([
-        InlineKeyboardButton("🏠 Главное меню", callback_data="m:menu"),
+        InlineKeyboardButton(t(lang, "btn.main_menu"), callback_data="m:menu"),
     ])
     return InlineKeyboardMarkup(rows)
 
 
-def wallet_detail_keyboard(wallet) -> InlineKeyboardMarkup:
+def wallet_detail_keyboard(lang: str, wallet) -> InlineKeyboardMarkup:
     addr = wallet.address
     pause_btn = (
-        InlineKeyboardButton("⏸ Пауза", callback_data=f"pa:{addr}")
+        InlineKeyboardButton(t(lang, "btn.pause"), callback_data=f"pa:{addr}")
         if wallet.active else
-        InlineKeyboardButton("▶️ Возобновить", callback_data=f"re:{addr}")
+        InlineKeyboardButton(t(lang, "btn.resume"), callback_data=f"re:{addr}")
     )
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Позиции", callback_data=f"wp:{addr}"),
-         InlineKeyboardButton("🎯 Ордера", callback_data=f"wo:{addr}")],
-        [InlineKeyboardButton("📊 TWAP", callback_data=f"wt:{addr}"),
-         InlineKeyboardButton("📊 Статистика", callback_data=f"ws:{addr}")],
-        [InlineKeyboardButton("✏️ Переименовать", callback_data=f"rn:{addr}"),
+        [InlineKeyboardButton(t(lang, "btn.positions"), callback_data=f"wp:{addr}"),
+         InlineKeyboardButton(t(lang, "btn.orders"), callback_data=f"wo:{addr}")],
+        [InlineKeyboardButton(t(lang, "btn.twap"), callback_data=f"wt:{addr}"),
+         InlineKeyboardButton(t(lang, "btn.stats"), callback_data=f"ws:{addr}")],
+        [InlineKeyboardButton(t(lang, "btn.rename"), callback_data=f"rn:{addr}"),
          pause_btn],
-        [InlineKeyboardButton("🗑 Удалить", callback_data=f"rm:{addr}")],
-        [InlineKeyboardButton("⬅️ К списку", callback_data="m:wallets"),
-         InlineKeyboardButton("🏠 Меню", callback_data="m:menu")],
+        [InlineKeyboardButton(t(lang, "btn.delete"), callback_data=f"rm:{addr}")],
+        [InlineKeyboardButton(t(lang, "btn.back_to_list"), callback_data="m:wallets"),
+         InlineKeyboardButton(t(lang, "btn.menu"), callback_data="m:menu")],
     ])
 
 
-def stats_period_keyboard(addr: str = "") -> InlineKeyboardMarkup:
+def stats_period_keyboard(lang: str, addr: str = "") -> InlineKeyboardMarkup:
     if addr:
         rows = [[
-            InlineKeyboardButton("24ч", callback_data=f"sp:{addr}:24h"),
-            InlineKeyboardButton("7д", callback_data=f"sp:{addr}:7d"),
-            InlineKeyboardButton("30д", callback_data=f"sp:{addr}:30d"),
+            InlineKeyboardButton(t(lang, "btn.24h"), callback_data=f"sp:{addr}:24h"),
+            InlineKeyboardButton(t(lang, "btn.7d"), callback_data=f"sp:{addr}:7d"),
+            InlineKeyboardButton(t(lang, "btn.30d"), callback_data=f"sp:{addr}:30d"),
         ], [
-            InlineKeyboardButton("⬅️ К кошельку", callback_data=f"w:{addr}"),
-            InlineKeyboardButton("🏠 Меню", callback_data="m:menu"),
+            InlineKeyboardButton(t(lang, "btn.back_to_wallet"), callback_data=f"w:{addr}"),
+            InlineKeyboardButton(t(lang, "btn.menu"), callback_data="m:menu"),
         ]]
     else:
         rows = [[
-            InlineKeyboardButton("24ч", callback_data="sg:24h"),
-            InlineKeyboardButton("7д", callback_data="sg:7d"),
-            InlineKeyboardButton("30д", callback_data="sg:30d"),
+            InlineKeyboardButton(t(lang, "btn.24h"), callback_data="sg:24h"),
+            InlineKeyboardButton(t(lang, "btn.7d"), callback_data="sg:7d"),
+            InlineKeyboardButton(t(lang, "btn.30d"), callback_data="sg:30d"),
         ], [
-            InlineKeyboardButton("🏠 Меню", callback_data="m:menu"),
+            InlineKeyboardButton(t(lang, "btn.menu"), callback_data="m:menu"),
         ]]
     return InlineKeyboardMarkup(rows)
 
 
-def confirm_remove_keyboard(addr: str) -> InlineKeyboardMarkup:
+def confirm_remove_keyboard(lang: str, addr: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"cr:{addr}"),
-         InlineKeyboardButton("❌ Отмена", callback_data=f"w:{addr}")],
+        [InlineKeyboardButton(t(lang, "btn.confirm_delete"), callback_data=f"cr:{addr}"),
+         InlineKeyboardButton(t(lang, "btn.cancel"), callback_data=f"w:{addr}")],
     ])
 
 
-def cancel_keyboard() -> InlineKeyboardMarkup:
+def cancel_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("❌ Отмена", callback_data="m:menu")],
+        [InlineKeyboardButton(t(lang, "btn.cancel"), callback_data="m:menu")],
+    ])
+
+
+def settings_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(lang, "btn.lang_ru"), callback_data="st:lang:ru"),
+         InlineKeyboardButton(t(lang, "btn.lang_en"), callback_data="st:lang:en")],
+        [InlineKeyboardButton(t(lang, "btn.min_position"), callback_data="st:minpos"),
+         InlineKeyboardButton(t(lang, "btn.agg_threshold"), callback_data="st:aggthr")],
+        [InlineKeyboardButton(t(lang, "btn.main_menu"), callback_data="m:menu")],
     ])
 
 
@@ -107,90 +119,72 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
 #  menu screen texts
 # ---------------------------------------------------------------------------
 
-MAIN_MENU_TEXT = (
-    "🤖 <b>Hyperliquid Wallet Tracker</b>\n\n"
-    "Выберите действие в меню ниже."
-)
+def main_menu_text(lang: str) -> str:
+    return t(lang, "menu.main")
 
 
-def wallets_list_text(wallets: list) -> str:
+def wallets_list_text(lang: str, wallets: list) -> str:
     if not wallets:
-        return ("📋 <b>Кошельки</b>\n\n"
-                "Список пуст. Нажмите <b>➕ Добавить</b>, чтобы начать.")
+        return t(lang, "wallets.empty")
     active = sum(1 for w in wallets if w.active)
-    paused = len(wallets) - active
-    return (
-        f"📋 <b>Кошельки</b>\n\n"
-        f"Всего: <b>{len(wallets)}</b> | "
-        f"Активных: <b>{active}</b> | "
-        f"На паузе: <b>{paused}</b>\n\n"
-        f"Выберите кошелёк для управления:"
-    )
+    return t(lang, "wallets.header", total=len(wallets), active=active,
+             paused=len(wallets) - active)
 
 
 def wallet_detail_text(
-    wallet, positions: dict, orders: list,
+    lang: str, wallet, positions: dict, orders: list,
     balance: float = 0.0,
     pnl_24h: float = 0.0, pnl_7d: float = 0.0,
     pnl_30d: float = 0.0, pnl_all: float = 0.0,
 ) -> str:
-    status = "🟢 Активен" if wallet.active else "⏸ На паузе"
+    status = t(lang, "wallet.status_active" if wallet.active
+               else "wallet.status_paused")
     upnl = sum(p.unrealized_pnl for p in positions.values())
-    return (
+    head = (
         f"👤 <a href=\"{hyperdash_link(wallet.address)}\"><b>{esc(wallet.label)}</b></a>\n"
         f"<code>{wallet.address}</code>\n\n"
-        f"Статус: {status}\n"
-        f"💼 Баланс: <b>{fmt_usd(balance)}</b>\n\n"
-        f"📂 Позиций: <b>{len(positions)}</b>\n"
-        f"📈 Unrealized PnL: <b>{fmt_usd_signed(upnl)}</b>\n"
-        f"🎯 Ордеров: <b>{len(orders)}</b>\n\n"
-        f"<b>Realized PnL:</b>\n"
-        f"  24ч:    {fmt_usd_signed(pnl_24h)}\n"
-        f"  7д:     {fmt_usd_signed(pnl_7d)}\n"
-        f"  30д:    {fmt_usd_signed(pnl_30d)}\n"
-        f"  Весь:   {fmt_usd_signed(pnl_all)}"
+    )
+    return head + t(
+        lang, "wallet.detail",
+        status=status, balance=fmt_usd(balance),
+        positions=len(positions), upnl=fmt_usd_signed(upnl),
+        orders=len(orders),
+        pnl_24h=fmt_usd_signed(pnl_24h), pnl_7d=fmt_usd_signed(pnl_7d),
+        pnl_30d=fmt_usd_signed(pnl_30d), pnl_all=fmt_usd_signed(pnl_all),
     )
 
 
-ADD_WALLET_PROMPT = (
-    "➕ <b>Добавление кошелька</b>\n\n"
-    "Отправьте сообщение в формате:\n"
-    "<code>0x... [метка]</code>\n\n"
-    "Пример:\n"
-    "<code>0x84b36f07a6547b1d6a2414240db69d9bbd0ee01f Whale1</code>\n\n"
-    "Метка — необязательна."
-)
+def add_wallet_prompt(lang: str) -> str:
+    return t(lang, "add.prompt")
 
 
-def rename_prompt_text(wallet) -> str:
-    return (
-        f"✏️ <b>Переименование кошелька</b>\n\n"
-        f"Текущая метка: <b>{esc(wallet.label)}</b>\n"
-        f"Адрес: <code>{short_addr(wallet.address)}</code>\n\n"
-        f"Отправьте новое имя сообщением."
-    )
+def rename_prompt_text(lang: str, wallet) -> str:
+    return t(lang, "rename.prompt", label=esc(wallet.label),
+             addr=short_addr(wallet.address))
 
 
-def confirm_remove_text(wallet) -> str:
-    return (
-        f"🗑 <b>Удалить кошелёк?</b>\n\n"
-        f"Метка: <b>{esc(wallet.label)}</b>\n"
-        f"Адрес: <code>{wallet.address}</code>\n\n"
-        f"История транзакций сохранится."
-    )
+def confirm_remove_text(lang: str, wallet) -> str:
+    return t(lang, "remove.confirm", label=esc(wallet.label),
+             addr=wallet.address)
 
 
-STATS_MENU_TEXT = (
-    "📊 <b>Статистика</b>\n\n"
-    "Выберите период (по всем активным кошелькам):"
-)
+def stats_menu_text(lang: str) -> str:
+    return t(lang, "stats.menu")
 
 
-def wallet_stats_menu_text(wallet) -> str:
-    return (
-        f"📊 <b>Статистика — {esc(wallet.label)}</b>\n\n"
-        f"Выберите период:"
-    )
+def wallet_stats_menu_text(lang: str, wallet) -> str:
+    return t(lang, "stats.wallet_menu", label=esc(wallet.label))
+
+
+def settings_text(lang: str, user) -> str:
+    return t(lang, "settings.screen",
+             lang=t(lang, "settings.lang_name"),
+             min_pos=fmt_usd(user.min_position_usd),
+             agg_thr=fmt_usd(user.fill_agg_threshold))
+
+
+def help_text(lang: str) -> str:
+    return t(lang, "help")
 
 
 # ---------------------------------------------------------------------------
@@ -223,19 +217,17 @@ _TZ_OFFSET_SEC = config.TZ_OFFSET_HOURS * 3600
 _TZ_SUFFIX = (f"GMT+{config.TZ_OFFSET_HOURS}" if config.TZ_OFFSET_HOURS >= 0
               else f"GMT{config.TZ_OFFSET_HOURS}")
 
-_RU_MONTHS = ["янв", "фев", "мар", "апр", "май", "июн",
-              "июл", "авг", "сен", "окт", "ноя", "дек"]
-
 
 def fmt_time_hhmm(ts: int) -> str:
     """Format unix timestamp (seconds) as HH:MM in the configured timezone."""
     return time.strftime("%H:%M", time.gmtime(ts + _TZ_OFFSET_SEC))
 
 
-def fmt_datetime(ts: int) -> str:
-    """Format unix timestamp as 'DD мес, HH:MM' in the configured timezone."""
+def fmt_datetime(ts: int, lang: str = "en") -> str:
+    """Format unix timestamp as 'DD mon, HH:MM' in the configured timezone."""
     tm = time.gmtime(ts + _TZ_OFFSET_SEC)
-    return f"{tm.tm_mday} {_RU_MONTHS[tm.tm_mon - 1]}, {tm.tm_hour:02d}:{tm.tm_min:02d}"
+    return (f"{tm.tm_mday} {month_name(lang, tm.tm_mon)}, "
+            f"{tm.tm_hour:02d}:{tm.tm_min:02d}")
 
 
 def fmt_time_range(first_ts: int, last_ts: int) -> str:
@@ -272,16 +264,17 @@ def fmt_price(x: float) -> str:
     return f"${x:.6f}"
 
 
-def fmt_duration(seconds: Optional[int]) -> str:
+def fmt_duration(seconds: Optional[int], lang: str = "en") -> str:
     if not seconds:
         return "—"
+    uh, um, us = duration_units(lang)
     h, rem = divmod(int(seconds), 3600)
     m, s = divmod(rem, 60)
     if h:
-        return f"{h}ч {m}мин"
+        return f"{h}{uh} {m}{um}"
     if m:
-        return f"{m}мин {s}с"
-    return f"{s}с"
+        return f"{m}{um} {s}{us}"
+    return f"{s}{us}"
 
 
 def side_emoji(side: str) -> str:
@@ -292,49 +285,51 @@ def side_emoji(side: str) -> str:
 #  position events
 # ---------------------------------------------------------------------------
 
-def format_position_open(ev: PositionEvent, label: str) -> str:
+def format_position_open(lang: str, ev: PositionEvent, label: str) -> str:
     side_word = ev.side.upper()
     em = side_emoji(side_word)
     leverage = f"{ev.leverage:g}x" if ev.leverage else "—"
     return (
-        f"📈 <b>ОТКРЫТА ПОЗИЦИЯ</b>\n"
+        f"{t(lang, 'ev.position_opened')}\n"
         f"{wallet_line(label, ev.wallet)}\n"
-        f"Монета: <b>{esc(ev.coin)}</b>\n"
-        f"Направление: <b>{esc(side_word)}</b> {em}\n"
-        f"Размер: <b>{fmt_usd(ev.notional)}</b>\n"
-        f"Цена входа: {fmt_price(ev.entry_price)}\n"
-        f"Плечо: {leverage}"
+        f"{t(lang, 'ev.coin')}: <b>{esc(ev.coin)}</b>\n"
+        f"{t(lang, 'ev.direction')}: <b>{esc(side_word)}</b> {em}\n"
+        f"{t(lang, 'ev.size')}: <b>{fmt_usd(ev.notional)}</b>\n"
+        f"{t(lang, 'ev.entry_price')}: {fmt_price(ev.entry_price)}\n"
+        f"{t(lang, 'ev.leverage')}: {leverage}"
     )
 
 
-def format_position_close(ev: PositionEvent, label: str) -> str:
+def format_position_close(lang: str, ev: PositionEvent, label: str) -> str:
     pnl = ev.pnl or 0.0
     pnl_emoji = "✅" if pnl >= 0 else "❌"
     pnl_str = f"{fmt_usd_signed(pnl)} {pnl_emoji}"
     close_px = fmt_price(ev.close_price) if ev.close_price else "—"
     return (
-        f"📉 <b>ЗАКРЫТА ПОЗИЦИЯ</b>\n"
+        f"{t(lang, 'ev.position_closed')}\n"
         f"{wallet_line(label, ev.wallet)}\n"
-        f"Монета: <b>{esc(ev.coin)}</b> ({esc(ev.side)})\n"
-        f"Цена входа: {fmt_price(ev.entry_price)}\n"
-        f"Цена выхода: {close_px}\n"
-        f"Результат: <b>{pnl_str}</b>\n"
-        f"Удержание: {fmt_duration(ev.holding_seconds)}"
+        f"{t(lang, 'ev.coin')}: <b>{esc(ev.coin)}</b> ({esc(ev.side)})\n"
+        f"{t(lang, 'ev.entry_price')}: {fmt_price(ev.entry_price)}\n"
+        f"{t(lang, 'ev.exit_price')}: {close_px}\n"
+        f"{t(lang, 'ev.result')}: <b>{pnl_str}</b>\n"
+        f"{t(lang, 'ev.holding')}: {fmt_duration(ev.holding_seconds, lang)}"
     )
 
 
-def format_position_scaled(ev: PositionEvent, label: str,
+def format_position_scaled(lang: str, ev: PositionEvent, label: str,
                            prev_size: float, prev_notional: float) -> str:
-    direction = "увеличена" if ev.size > prev_size else "уменьшена"
+    title = t(lang, "ev.position_increased" if ev.size > prev_size
+              else "ev.position_decreased")
     delta_usd = ev.notional - prev_notional
-    lev_line = f"\nПлечо: {ev.leverage:g}x" if ev.leverage else ""
+    lev_line = (f"\n{t(lang, 'ev.leverage')}: {ev.leverage:g}x"
+                if ev.leverage else "")
     return (
-        f"📐 <b>ПОЗИЦИЯ {esc(direction.upper())}</b>\n"
+        f"{title}\n"
         f"{wallet_line(label, ev.wallet)}\n"
-        f"Монета: <b>{esc(ev.coin)}</b> ({esc(ev.side)})\n"
-        f"Размер: {fmt_usd(prev_notional)} → <b>{fmt_usd(ev.notional)}</b> "
+        f"{t(lang, 'ev.coin')}: <b>{esc(ev.coin)}</b> ({esc(ev.side)})\n"
+        f"{t(lang, 'ev.size')}: {fmt_usd(prev_notional)} → <b>{fmt_usd(ev.notional)}</b> "
         f"({fmt_usd_signed(delta_usd)})\n"
-        f"Цена входа: {fmt_price(ev.entry_price)}"
+        f"{t(lang, 'ev.entry_price')}: {fmt_price(ev.entry_price)}"
         f"{lev_line}"
     )
 
@@ -343,38 +338,39 @@ def format_position_scaled(ev: PositionEvent, label: str,
 #  order events
 # ---------------------------------------------------------------------------
 
-def format_order_placed(ev: OrderEvent, label: str) -> str:
+def format_order_placed(lang: str, ev: OrderEvent, label: str) -> str:
     cur = ""
     if ev.current_price and ev.price:
         delta_pct = (ev.current_price - ev.price) / ev.price * 100
         sign = "+" if delta_pct >= 0 else ""
-        cur = f"\nТекущая цена: {fmt_price(ev.current_price)} ({sign}{delta_pct:.2f}%)"
+        cur = (f"\n{t(lang, 'ev.current_price')}: "
+               f"{fmt_price(ev.current_price)} ({sign}{delta_pct:.2f}%)")
     return (
-        f"🎯 <b>ВЫСТАВЛЕН ОРДЕР</b>\n"
+        f"{t(lang, 'ev.order_placed')}\n"
         f"👤 {esc(label)} (<code>{short_addr(ev.wallet)}</code>)\n"
-        f"Тип: <b>{esc(ev.type)}</b>\n"
-        f"Монета: <b>{esc(ev.coin)}</b>\n"
-        f"Размер: <b>{fmt_usd(ev.notional)}</b>\n"
-        f"Цена ордера: {fmt_price(ev.price)}"
+        f"{t(lang, 'ev.order_type')}: <b>{esc(ev.type)}</b>\n"
+        f"{t(lang, 'ev.coin')}: <b>{esc(ev.coin)}</b>\n"
+        f"{t(lang, 'ev.size')}: <b>{fmt_usd(ev.notional)}</b>\n"
+        f"{t(lang, 'ev.order_price')}: {fmt_price(ev.price)}"
         f"{cur}"
     )
 
 
-def format_order_canceled(ev: OrderEvent, label: str) -> str:
+def format_order_canceled(lang: str, ev: OrderEvent, label: str) -> str:
     return (
-        f"🚫 <b>ОТМЕНЁН ОРДЕР</b>\n"
+        f"{t(lang, 'ev.order_canceled')}\n"
         f"👤 {esc(label)} (<code>{short_addr(ev.wallet)}</code>)\n"
-        f"Тип: {esc(ev.type)} • {esc(ev.coin)}\n"
-        f"Размер: {fmt_usd(ev.notional)} @ {fmt_price(ev.price)}"
+        f"{t(lang, 'ev.order_type')}: {esc(ev.type)} • {esc(ev.coin)}\n"
+        f"{t(lang, 'ev.size')}: {fmt_usd(ev.notional)} @ {fmt_price(ev.price)}"
     )
 
 
-def format_order_filled(ev: OrderEvent, label: str) -> str:
+def format_order_filled(lang: str, ev: OrderEvent, label: str) -> str:
     return (
-        f"✅ <b>ИСПОЛНЕН ОРДЕР</b>\n"
+        f"{t(lang, 'ev.order_filled')}\n"
         f"👤 {esc(label)} (<code>{short_addr(ev.wallet)}</code>)\n"
-        f"Тип: {esc(ev.type)} • {esc(ev.coin)}\n"
-        f"Размер: {fmt_usd(ev.notional)} @ {fmt_price(ev.price)}"
+        f"{t(lang, 'ev.order_type')}: {esc(ev.type)} • {esc(ev.coin)}\n"
+        f"{t(lang, 'ev.size')}: {fmt_usd(ev.notional)} @ {fmt_price(ev.price)}"
     )
 
 
@@ -382,14 +378,14 @@ def format_order_filled(ev: OrderEvent, label: str) -> str:
 #  aggregated fills
 # ---------------------------------------------------------------------------
 
-def _agg_action(agg: dict) -> tuple[str, str, str]:
-    """Determine (title, emoji, direction) from aggregated fills.
+def _agg_action(lang: str, agg: dict) -> tuple[str, str]:
+    """Determine (title, emoji) from aggregated fills.
 
     Logic:
-      BUY  + has close fills  → 'Закрытие SHORT' (cover)
-      BUY  + no close fills   → 'Открытие LONG'
-      SELL + has close fills  → 'Закрытие LONG'
-      SELL + no close fills   → 'Открытие SHORT'
+      BUY  + has close fills  → closing SHORT (cover)
+      BUY  + no close fills   → opening LONG
+      SELL + has close fills  → closing LONG
+      SELL + no close fills   → opening SHORT
     """
     side = agg["side"]
     has_close = agg.get("close_fills", 0) > 0
@@ -404,42 +400,43 @@ def _agg_action(agg: dict) -> tuple[str, str, str]:
             has_close = False
 
     if is_buy and has_close:
-        return "📈 ЗАКРЫТИЕ SHORT", "🟢", "SHORT"
+        return t(lang, "agg.close_short"), "🟢"
     if is_buy:
-        return "📈 ОТКРЫТИЕ LONG", "🟢", "LONG"
+        return t(lang, "agg.open_long"), "🟢"
     if has_close:
-        return "📉 ЗАКРЫТИЕ LONG", "🔴", "LONG"
-    return "📉 ОТКРЫТИЕ SHORT", "🔴", "SHORT"
+        return t(lang, "agg.close_long"), "🔴"
+    return t(lang, "agg.open_short"), "🔴"
 
 
-def format_fills_aggregated(agg: dict, label: str) -> str:
+def format_fills_aggregated(lang: str, agg: dict, label: str) -> str:
     coin = esc(agg["coin"])
-    title, em, _ = _agg_action(agg)
+    title, em = _agg_action(lang, agg)
     pnl_line = ""
     if agg.get("total_pnl"):
         pnl_line = f"\nP&amp;L: <b>{fmt_usd_signed(agg['total_pnl'])}</b>"
     fee_line = ""
     if agg.get("total_fee"):
-        fee_line = f"\nКомиссия: {fmt_usd(agg['total_fee'])}"
+        fee_line = f"\n{t(lang, 'agg.fee')}: {fmt_usd(agg['total_fee'])}"
     time_line = ""
     first_ts = agg.get("first_ts")
     last_ts = agg.get("last_ts")
     if first_ts and last_ts:
-        time_line = f"\nВремя сделок: {fmt_time_range(first_ts, last_ts)}"
+        time_line = (f"\n{t(lang, 'agg.trade_time')}: "
+                     f"{fmt_time_range(first_ts, last_ts)}")
     pos_line = ""
     pos_entry = agg.get("position_entry_price")
     pos_notional = agg.get("position_notional")
     if pos_entry:
-        pos_line = (f"\n<b>Позиция целиком:</b> "
+        pos_line = (f"\n<b>{t(lang, 'agg.whole_position')}:</b> "
                     f"{fmt_usd(pos_notional or 0)} @ {fmt_price(pos_entry)}")
     return (
         f"<b>{title}</b> {em}\n"
         f"{wallet_line(label, agg['wallet'])}\n"
-        f"Монета: <b>{coin}</b>\n"
-        f"Транзакций: <b>{agg['count']}</b>\n"
-        f"Общий объём: <b>{fmt_usd(agg['total_notional'])}</b>\n"
-        f"Суммарный размер: {agg['total_size']:.4g}\n"
-        f"Средняя цена сделок: {fmt_price(agg['avg_price'])}"
+        f"{t(lang, 'ev.coin')}: <b>{coin}</b>\n"
+        f"{t(lang, 'agg.tx_count')}: <b>{agg['count']}</b>\n"
+        f"{t(lang, 'agg.total_volume')}: <b>{fmt_usd(agg['total_notional'])}</b>\n"
+        f"{t(lang, 'agg.total_size')}: {agg['total_size']:.4g}\n"
+        f"{t(lang, 'agg.avg_price')}: {fmt_price(agg['avg_price'])}"
         f"{pos_line}{pnl_line}{fee_line}{time_line}"
     )
 
@@ -448,20 +445,21 @@ def format_fills_aggregated(agg: dict, label: str) -> str:
 #  anomaly
 # ---------------------------------------------------------------------------
 
-def format_anomaly(hit: AnomalyHit, labels: dict[str, str]) -> str:
+def format_anomaly(lang: str, hit: AnomalyHit,
+                   labels: dict[str, str]) -> str:
     lines = [
-        "⚡️ <b>СОВПАДЕНИЕ!</b>",
-        f"{len(hit.wallets)} твоих кита открыли <b>{esc(hit.side)}</b> "
-        f"на <b>{esc(hit.coin)}</b> одновременно",
+        t(lang, "anomaly.title"),
+        t(lang, "anomaly.body", n=len(hit.wallets),
+          side=esc(hit.side), coin=esc(hit.coin)),
         "",
     ]
     for addr, label, notional in hit.wallets:
         nice = labels.get(addr, label) or short_addr(addr)
         lines.append(f"👤 {esc(nice)} — <b>{fmt_usd(notional)}</b>")
     lines.append("")
-    lines.append(f"Суммарно: <b>{fmt_usd(hit.total_notional)}</b>")
+    lines.append(f"{t(lang, 'anomaly.total')}: <b>{fmt_usd(hit.total_notional)}</b>")
     minutes = max(1, hit.interval_seconds // 60)
-    lines.append(f"Интервал: {minutes} мин")
+    lines.append(t(lang, "anomaly.interval", minutes=minutes))
     return "\n".join(lines)
 
 
@@ -470,6 +468,7 @@ def format_anomaly(hit: AnomalyHit, labels: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 def format_active_positions(
+    lang: str,
     per_wallet: list[tuple[str, str, dict[str, PositionSnapshot]]],
 ) -> str:
     """per_wallet: list of (label, address, positions_by_coin)."""
@@ -481,9 +480,9 @@ def format_active_positions(
     )
 
     if not total_pos:
-        return "📈 Нет активных позиций."
+        return t(lang, "pos.none")
 
-    lines = ["📈 <b>АКТИВНЫЕ ПОЗИЦИИ</b>", ""]
+    lines = [t(lang, "pos.header"), ""]
 
     for label, addr, positions in per_wallet:
         if not positions:
@@ -504,31 +503,29 @@ def format_active_positions(
                 dist_pct = abs(snap.liquidation_price - snap.entry_price) \
                            / snap.entry_price * 100
                 warn = "⚠️ " if dist_pct < 5 else ""
-                lines.append(
-                    f"     💀 Ликвидация: {fmt_price(snap.liquidation_price)} "
-                    f"({warn}{dist_pct:.1f}% от входа)"
-                )
+                lines.append(t(lang, "pos.liquidation",
+                               price=fmt_price(snap.liquidation_price),
+                               warn=warn, pct=dist_pct))
             elif snap.liquidation_price == 0 and snap.entry_price:
-                lines.append("     💀 Ликвидация: — (вне риска)")
+                lines.append(t(lang, "pos.liq_safe"))
         lines.append("")
 
-    lines.append(f"Всего позиций: <b>{total_pos}</b> "
-                 f"({fmt_usd_signed(total_pnl)})")
+    lines.append(t(lang, "pos.total", n=total_pos,
+                   pnl=fmt_usd_signed(total_pnl)))
     return "\n".join(lines)
 
 
 def format_twap_fills(
+    lang: str,
     per_wallet: list[tuple[str, str, list]],
     days: int = 7,
 ) -> str:
     """per_wallet: list of (label, address, list of TwapSliceFill)."""
     total = sum(len(fills) for _, _, fills in per_wallet)
     if not total:
-        return (f"📊 TWAP-сделки за последние {days} дней не найдены.\n\n"
-                f"Бот видит только исполнения слайсов от TWAP-ордеров. "
-                f"Если ни один TWAP не запускался — список будет пуст.")
+        return t(lang, "twap.none", days=days)
 
-    lines = [f"📊 <b>TWAP — последние {days} дней</b>", ""]
+    lines = [t(lang, "twap.header", days=days), ""]
     grand_volume = 0.0
     grand_fee = 0.0
     for label, addr, fills in per_wallet:
@@ -551,32 +548,32 @@ def format_twap_fills(
             em = "🟢" if side == "BUY" else "🔴"
             first = slices[0].time
             last = slices[-1].time
-            when = (fmt_datetime(first) if first == last
-                    else f"{fmt_datetime(first)} – {fmt_time_hhmm(last)}")
+            when = (fmt_datetime(first, lang) if first == last
+                    else f"{fmt_datetime(first, lang)} – {fmt_time_hhmm(last)}")
             lines.append(
                 f"  {em} <b>{esc(coin)}</b> {esc(side)} • "
-                f"{len(slices)} слайсов\n"
+                f"{len(slices)} {t(lang, 'twap.slices')}\n"
                 f"     {fmt_usd(total_notional)} @ {fmt_price(avg_px)}, "
-                f"комиссия {fmt_usd(total_fee)}\n"
+                f"{t(lang, 'twap.fee')} {fmt_usd(total_fee)}\n"
                 f"     {when} {_TZ_SUFFIX}"
             )
         lines.append("")
 
-    lines.append(f"Всего слайсов: <b>{total}</b> • "
-                 f"Объём: <b>{fmt_usd(grand_volume)}</b> • "
-                 f"Комиссии: {fmt_usd(grand_fee)}")
+    lines.append(t(lang, "twap.total", n=total,
+                   volume=fmt_usd(grand_volume), fee=fmt_usd(grand_fee)))
     return "\n".join(lines)
 
 
 def format_active_orders(
+    lang: str,
     per_wallet: list[tuple[str, str, list[dict]]],
 ) -> str:
     """per_wallet: list of (label, address, raw_open_orders)."""
     total_ord = sum(len(ords) for _, _, ords in per_wallet)
     if not total_ord:
-        return "🎯 Нет активных ордеров."
+        return t(lang, "ord.none")
 
-    lines = ["🎯 <b>АКТИВНЫЕ ОРДЕРА</b>", ""]
+    lines = [t(lang, "ord.header"), ""]
     total_notional = 0.0
     for label, addr, orders in per_wallet:
         if not orders:
@@ -595,8 +592,8 @@ def format_active_orders(
             )
         lines.append("")
 
-    lines.append(f"Всего ордеров: <b>{total_ord}</b> "
-                 f"на {fmt_usd(total_notional)}")
+    lines.append(t(lang, "ord.total", n=total_ord,
+                   notional=fmt_usd(total_notional)))
     return "\n".join(lines)
 
 
@@ -604,21 +601,19 @@ def format_active_orders(
 #  /list
 # ---------------------------------------------------------------------------
 
-def format_wallet_list(wallets: list[Wallet]) -> str:
+def format_wallet_list(lang: str, wallets: list[Wallet]) -> str:
     if not wallets:
-        return ("📋 <b>ОТСЛЕЖИВАЕМЫЕ КОШЕЛЬКИ (0)</b>\n\n"
-                "Список пуст. Добавь кошелёк командой:\n"
-                "<code>/add 0x... [метка]</code>")
+        return t(lang, "list.empty")
     active = [w for w in wallets if w.active]
     paused = [w for w in wallets if not w.active]
 
-    lines = [f"📋 <b>ОТСЛЕЖИВАЕМЫЕ КОШЕЛЬКИ ({len(wallets)})</b>", ""]
+    lines = [t(lang, "list.header", n=len(wallets)), ""]
     for w in active:
         lines.append(f"🟢 <b>{esc(w.label)}</b> — <code>{short_addr(w.address)}</code>")
     for w in paused:
         lines.append(f"⏸ {esc(w.label)} — <code>{short_addr(w.address)}</code>")
     lines.append("")
-    lines.append(f"Активных: {len(active)} | На паузе: {len(paused)}")
+    lines.append(t(lang, "list.footer", active=len(active), paused=len(paused)))
     return "\n".join(lines)
 
 
@@ -627,10 +622,11 @@ def format_wallet_list(wallets: list[Wallet]) -> str:
 # ---------------------------------------------------------------------------
 
 def format_stats(
+    lang: str,
     label: str,
     closed: list[Position],
     open_positions: list[Position],
-    period_label: str = "24ч",
+    period_label: str = "24h",
     unrealized: dict[str, float] | None = None,
 ) -> str:
     n = len(closed)
@@ -643,21 +639,22 @@ def format_stats(
     worst = min(closed, key=lambda p: (p.pnl or 0)) if closed else None
 
     lines = [f"📊 <b>{esc(label)}</b> — {esc(period_label)}", ""]
-    lines.append(f"Сделок: <b>{n}</b>")
+    lines.append(t(lang, "stats.trades", n=n))
     if n:
-        lines.append(f"Прибыльных: <b>{len(profitable)}</b> ({win_rate:.0f}%)")
+        lines.append(t(lang, "stats.profitable", n=len(profitable),
+                       rate=win_rate))
     lines.append("")
     lines.append(f"💰 P&L: <b>{fmt_usd_signed(pnl_total)}</b>")
     if best and (best.pnl or 0) > 0:
-        lines.append(f"📈 Лучшая: {fmt_usd_signed(best.pnl or 0)} "
-                     f"({esc(best.coin)} {best.side.lower()})")
+        lines.append(t(lang, "stats.best", pnl=fmt_usd_signed(best.pnl or 0),
+                       coin=esc(best.coin), side=best.side.lower()))
     if worst and (worst.pnl or 0) < 0:
-        lines.append(f"📉 Худшая: {fmt_usd_signed(worst.pnl or 0)} "
-                     f"({esc(worst.coin)} {worst.side.lower()})")
+        lines.append(t(lang, "stats.worst", pnl=fmt_usd_signed(worst.pnl or 0),
+                       coin=esc(worst.coin), side=worst.side.lower()))
 
     if open_positions:
         lines.append("")
-        lines.append("Текущие открытые позиции:")
+        lines.append(t(lang, "stats.open_positions"))
         for p in open_positions:
             upnl = unrealized.get(p.coin, p.pnl or 0)
             em = "🟢" if upnl >= 0 else "🔴"
@@ -669,10 +666,11 @@ def format_stats(
 
 
 def format_global_stats(
+    lang: str,
     per_wallet: list[tuple[str, list[Position], list[Position]]],
-    period_label: str = "24ч",
+    period_label: str = "24h",
 ) -> str:
-    lines = [f"📊 <b>ОБЩАЯ СТАТИСТИКА</b> — {esc(period_label)}", ""]
+    lines = [t(lang, "stats.global_header", period=esc(period_label)), ""]
     total_trades = 0
     total_profitable = 0
     total_pnl = 0.0
@@ -684,41 +682,20 @@ def format_global_stats(
         open_count += len(opens)
 
     win_rate = (total_profitable / total_trades * 100) if total_trades else 0
-    lines.append(f"Кошельков: <b>{len(per_wallet)}</b>")
-    lines.append(f"Сделок: <b>{total_trades}</b>")
+    lines.append(t(lang, "stats.wallets_count", n=len(per_wallet)))
+    lines.append(t(lang, "stats.trades", n=total_trades))
     if total_trades:
-        lines.append(f"Прибыльных: <b>{total_profitable}</b> ({win_rate:.0f}%)")
-    lines.append(f"💰 Суммарный P&L: <b>{fmt_usd_signed(total_pnl)}</b>")
-    lines.append(f"📂 Открытых позиций: <b>{open_count}</b>")
+        lines.append(t(lang, "stats.profitable", n=total_profitable,
+                       rate=win_rate))
+    lines.append(t(lang, "stats.total_pnl", pnl=fmt_usd_signed(total_pnl)))
+    lines.append(t(lang, "stats.open_count", n=open_count))
 
     if per_wallet:
         lines.append("")
-        lines.append("<b>По кошелькам:</b>")
+        lines.append(t(lang, "stats.by_wallet"))
         for label, closed, opens in per_wallet:
             wp = sum((p.pnl or 0) for p in closed)
-            lines.append(
-                f"• {esc(label)}: {len(closed)} сделок, "
-                f"P&L {fmt_usd_signed(wp)}, открыто {len(opens)}"
-            )
+            lines.append(t(lang, "stats.wallet_line", label=esc(label),
+                           trades=len(closed), pnl=fmt_usd_signed(wp),
+                           open=len(opens)))
     return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-#  help
-# ---------------------------------------------------------------------------
-
-HELP_TEXT = (
-    "<b>Hyperliquid Wallet Tracker</b>\n\n"
-    "<b>Команды:</b>\n"
-    "<code>/add 0x... [метка]</code> — добавить кошелёк\n"
-    "<code>/remove 0x...</code> — удалить кошелёк\n"
-    "<code>/list</code> — список отслеживаемых кошельков\n"
-    "<code>/positions</code> — активные позиции и ордера\n"
-    "<code>/rename 0x... Новое имя</code> — переименовать метку\n"
-    "<code>/pause 0x...</code> — приостановить слежку\n"
-    "<code>/resume 0x...</code> — возобновить слежку\n"
-    "<code>/stats [24h|7d|30d]</code> — статистика по всем\n"
-    "<code>/stats 0x... [24h|7d|30d]</code> — статистика по конкретному\n"
-    "<code>/menu</code> — открыть меню с кнопками\n"
-    "<code>/help</code> — эта справка"
-)

@@ -41,6 +41,7 @@ log = logging.getLogger("dry_run")
 
 WALLET = "0xaabbccdd00112233445566778899aabbccddeeff"
 LABEL = "TestWhale"
+LANG = "ru"
 SEPARATOR = "─" * 60
 
 collected: list[str] = []
@@ -61,7 +62,7 @@ async def main() -> None:
         kind="open", wallet=WALLET, coin="BTC", side="LONG",
         size=0.5, entry_price=65000, notional=32500, leverage=10,
     )
-    emit("1. POSITION OPEN (BTC LONG)", format_position_open(ev_open, LABEL))
+    emit("1. POSITION OPEN (BTC LONG)", format_position_open(LANG, ev_open, LABEL))
 
     # 2) Close BTC LONG with PnL
     ev_close = PositionEvent(
@@ -69,7 +70,7 @@ async def main() -> None:
         size=0.5, entry_price=65000, notional=32500, leverage=10,
         close_price=66500, pnl=750.0, holding_seconds=7200,
     )
-    emit("2. POSITION CLOSE (BTC LONG, +$750)", format_position_close(ev_close, LABEL))
+    emit("2. POSITION CLOSE (BTC LONG, +$750)", format_position_close(LANG, ev_close, LABEL))
 
     # 3) Scale position — size change
     ev_scale = PositionEvent(
@@ -78,7 +79,7 @@ async def main() -> None:
         close_price=2.0, pnl=6400,  # prev_size, prev_notional overloaded
     )
     emit("3. POSITION SCALED (ETH SHORT 2→4)", format_position_scaled(
-        ev_scale, LABEL, prev_size=2.0, prev_notional=6400))
+        LANG, ev_scale, LABEL, prev_size=2.0, prev_notional=6400))
 
     # 4) Order placed
     ev_order = OrderEvent(
@@ -86,21 +87,21 @@ async def main() -> None:
         type="LIMIT BUY", size=100, notional=15000, price=150,
         current_price=155,
     )
-    emit("4. ORDER PLACED (SOL LIMIT BUY)", format_order_placed(ev_order, LABEL))
+    emit("4. ORDER PLACED (SOL LIMIT BUY)", format_order_placed(LANG, ev_order, LABEL))
 
     # 5) Order canceled
     ev_cancel = OrderEvent(
         kind="canceled", wallet=WALLET, oid=42, coin="SOL",
         type="LIMIT BUY", size=100, notional=15000, price=150,
     )
-    emit("5. ORDER CANCELED (SOL)", format_order_canceled(ev_cancel, LABEL))
+    emit("5. ORDER CANCELED (SOL)", format_order_canceled(LANG, ev_cancel, LABEL))
 
     # 6) Order filled
     ev_fill_ord = OrderEvent(
         kind="filled", wallet=WALLET, oid=43, coin="ARB",
         type="LIMIT SELL", size=5000, notional=7500, price=1.50,
     )
-    emit("6. ORDER FILLED (ARB)", format_order_filled(ev_fill_ord, LABEL))
+    emit("6. ORDER FILLED (ARB)", format_order_filled(LANG, ev_fill_ord, LABEL))
 
     # 7) Anomaly detection
     detector = AnomalyDetector(window_sec=300, min_wallets=2)
@@ -109,7 +110,7 @@ async def main() -> None:
     hit = detector.record_open(wallet_b, "Whale2", "DOGE", "LONG", 30000)
     if hit:
         labels = {WALLET: LABEL, wallet_b: "Whale2"}
-        emit("7. ANOMALY DETECTED (DOGE LONG x2)", format_anomaly(hit, labels))
+        emit("7. ANOMALY DETECTED (DOGE LONG x2)", format_anomaly(LANG, hit, labels))
 
     # 8) webData2 full-cycle parse test
     payload = {

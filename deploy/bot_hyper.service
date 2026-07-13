@@ -1,0 +1,33 @@
+[Unit]
+Description=Hyperliquid Wallet Tracker Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/bot_hyper
+EnvironmentFile=/opt/bot_hyper/.env
+ExecStart=/opt/bot_hyper/.venv/bin/python /opt/bot_hyper/main.py
+
+# Restart policy: always, with backoff to avoid hot loops
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+# Logging to journald (view: journalctl -u bot_hyper -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bot_hyper
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/bot_hyper
+
+[Install]
+WantedBy=multi-user.target

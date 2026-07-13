@@ -38,7 +38,7 @@ WS_PING_INTERVAL: int = 30          # heartbeat
 WS_MAX_RECONNECT_DELAY: int = 60    # максимум при exponential backoff
 
 # === Агрегация сделок ===
-FILL_AGG_THRESHOLD: float = float(os.getenv("FILL_AGG_THRESHOLD", "10000"))
+FILL_AGG_THRESHOLD: float = float(os.getenv("FILL_AGG_THRESHOLD", "50000"))
 # Принудительный сброс буфера агрегации, если новых fills нет N секунд
 FILL_AGG_FLUSH_SEC: int = int(os.getenv("FILL_AGG_FLUSH_SEC", "900"))  # 15 минут
 

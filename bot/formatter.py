@@ -178,7 +178,7 @@ def wallet_stats_menu_text(lang: str, wallet) -> str:
 
 def settings_text(lang: str, user) -> str:
     return t(lang, "settings.screen",
-             lang=t(lang, "settings.lang_name"),
+             lang_name=t(lang, "settings.lang_name"),
              min_pos=fmt_usd(user.min_position_usd),
              agg_thr=fmt_usd(user.fill_agg_threshold))
 

@@ -108,14 +108,14 @@ CATALOG: dict[str, dict[str, str]] = {
     # --- settings ---
     "settings.screen": {
         "ru": ("⚙️ <b>Настройки</b>\n\n"
-               "🌐 Язык: <b>{lang}</b>\n"
+               "🌐 Язык: <b>{lang_name}</b>\n"
                "💵 Мин. размер позиции для уведомлений: <b>{min_pos}</b>\n"
                "📦 Порог агрегации сделок: <b>{agg_thr}</b>\n\n"
                "Уведомления приходят только по позициям крупнее минимального "
                "размера. Мелкие сделки копятся и шлются одним сообщением при "
                "достижении порога агрегации."),
         "en": ("⚙️ <b>Settings</b>\n\n"
-               "🌐 Language: <b>{lang}</b>\n"
+               "🌐 Language: <b>{lang_name}</b>\n"
                "💵 Min position size for alerts: <b>{min_pos}</b>\n"
                "📦 Fill aggregation threshold: <b>{agg_thr}</b>\n\n"
                "You only get alerts for positions above the minimum size. "

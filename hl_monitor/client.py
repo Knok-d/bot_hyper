@@ -128,7 +128,13 @@ class HyperliquidWS:
                     for addr in list(self._wallets):
                         await self._subscribe(addr)
 
-                    await self._read_loop(ws)
+                    # HL drops connections idle for ~60s; the protocol-level
+                    # WS ping doesn't count — an app-level ping is required.
+                    ping_task = asyncio.create_task(self._app_ping_loop())
+                    try:
+                        await self._read_loop(ws)
+                    finally:
+                        ping_task.cancel()
             except (ConnectionClosed, OSError) as e:
                 log.warning("WebSocket dropped: %s", e)
             except Exception:
@@ -163,6 +169,11 @@ class HyperliquidWS:
         for sub_type in self.SUB_TYPES:
             await self._send({"method": "unsubscribe",
                               "subscription": {"type": sub_type, "user": addr}})
+
+    async def _app_ping_loop(self) -> None:
+        while True:
+            await asyncio.sleep(45)
+            await self._send({"method": "ping"})
 
     async def _send(self, payload: dict) -> None:
         async with self._send_lock:
@@ -257,6 +268,9 @@ class HyperliquidWS:
 
         elif channel == "subscriptionResponse":
             log.debug("subscribed: %s", data)
+
+        elif channel == "pong":
+            pass
 
         elif channel == "error":
             log.warning("hyperliquid error: %s", data)

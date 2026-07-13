@@ -148,13 +148,19 @@ class HyperliquidWS:
 
     # ---------- internals ----------
 
+    # webData2 was removed from the HL API (mid-2026); positions and open
+    # orders now come from the dedicated clearinghouseState / openOrders
+    # channels, so a wallet costs 4 subscriptions.
+    SUB_TYPES = ("clearinghouseState", "openOrders", "orderUpdates",
+                 "userFills")
+
     async def _subscribe(self, addr: str) -> None:
-        for sub_type in ("webData2", "orderUpdates", "userFills"):
+        for sub_type in self.SUB_TYPES:
             await self._send({"method": "subscribe",
                               "subscription": {"type": sub_type, "user": addr}})
 
     async def _unsubscribe(self, addr: str) -> None:
-        for sub_type in ("webData2", "orderUpdates", "userFills"):
+        for sub_type in self.SUB_TYPES:
             await self._send({"method": "unsubscribe",
                               "subscription": {"type": sub_type, "user": addr}})
 
@@ -182,11 +188,23 @@ class HyperliquidWS:
         channel = msg.get("channel")
         data = msg.get("data") or {}
 
-        if channel == "webData2":
+        if channel == "clearinghouseState":
             user = (data.get("user") or "").lower()
             if user not in self._wallets:
                 return
-            await self._handle_web_data2(user, data)
+            await self._handle_clearinghouse_state(user, data)
+
+        elif channel == "openOrders":
+            user = (data.get("user") or "").lower()
+            if user not in self._wallets:
+                return
+            orders = data.get("orders") or []
+            self._open_orders_state[user] = orders
+            ko = self._known_oids.setdefault(user, set())
+            for oo in orders:
+                oid = int(oo.get("oid") or 0)
+                if oid:
+                    ko.add(oid)
 
         elif channel == "orderUpdates":
             updates = data if isinstance(data, list) else data.get("orders", [])
@@ -213,6 +231,8 @@ class HyperliquidWS:
                 await self.on_order(e)
 
         elif channel == "userFills":
+            if isinstance(data, dict) and data.get("isSnapshot"):
+                return  # historical snapshot on subscribe — not live fills
             user = (data.get("user") or msg.get("user") or "").lower()
             fills_list = data.get("fills") if isinstance(data, dict) else data
             if not isinstance(fills_list, list):
@@ -264,11 +284,12 @@ class HyperliquidWS:
             return next(iter(self._wallets))
         return ""
 
-    async def _handle_web_data2(self, user: str, data: dict) -> None:
-        positions, open_orders, mids = parse_web_data2(data)
-        if mids:
-            self._mids.update(mids)
-        self._open_orders_state[user] = open_orders
+    async def _handle_clearinghouse_state(self, user: str,
+                                          data: dict) -> None:
+        # channel payload: {"dex","user","clearinghouseState":{...}} — the
+        # inner object matches what webData2 used to embed, so the parser
+        # is reused as-is (openOrders/mids just come out empty).
+        positions, _, _ = parse_web_data2(data)
         self._account_state[user] = parse_account_state(data)
 
         now = int(time.time())
@@ -279,13 +300,8 @@ class HyperliquidWS:
             open_times = self._open_times.setdefault(user, {})
             for coin in positions:
                 open_times.setdefault(coin, now)
-            ko = self._known_oids.setdefault(user, set())
-            for oo in open_orders:
-                oid = int((oo.get("oid") or 0))
-                if oid:
-                    ko.add(oid)
-            log.info("Priming snapshot for %s: %d positions, %d orders",
-                     user, len(positions), len(ko))
+            log.info("Priming snapshot for %s: %d positions",
+                     user, len(positions))
             return
 
         prev = self._pos_state.get(user, {})

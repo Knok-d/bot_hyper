@@ -84,13 +84,15 @@ async def test_reconnect_resubscribes():
                 sub_types.add(p["subscription"]["type"])
                 sub_users.add(p["subscription"]["user"])
 
-        assert "webData2" in sub_types
+        assert "clearinghouseState" in sub_types
+        assert "openOrders" in sub_types
         assert "orderUpdates" in sub_types
+        assert "userFills" in sub_types
         assert len(sub_users) == 2
 
 
 async def test_priming_suppresses_events():
-    """First webData2 snapshot should not emit position events."""
+    """First clearinghouseState snapshot should not emit position events."""
     positions_received: list[PositionEvent] = []
 
     async def on_pos(ev):
@@ -102,8 +104,9 @@ async def test_priming_suppresses_events():
     wallet = "0x" + "a" * 40
 
     first_snapshot = json.dumps({
-        "channel": "webData2",
+        "channel": "clearinghouseState",
         "data": {
+            "dex": "",
             "user": wallet,
             "clearinghouseState": {
                 "assetPositions": [
@@ -112,14 +115,13 @@ async def test_priming_suppresses_events():
                                   "leverage": {"value": "10"}}},
                 ]
             },
-            "openOrders": [],
-            "allMids": {"BTC": "65500"},
         }
     })
 
     second_snapshot = json.dumps({
-        "channel": "webData2",
+        "channel": "clearinghouseState",
         "data": {
+            "dex": "",
             "user": wallet,
             "clearinghouseState": {
                 "assetPositions": [
@@ -131,8 +133,6 @@ async def test_priming_suppresses_events():
                                   "leverage": {"value": "5"}}},
                 ]
             },
-            "openOrders": [],
-            "allMids": {"BTC": "65600", "ETH": "3180"},
         }
     })
 

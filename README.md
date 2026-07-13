@@ -34,7 +34,7 @@ bot_hyper/
 ├── .env.example
 ├── hl_monitor/             # Hyperliquid слой (WS, парсер, детектор)
 │   ├── client.py           # WebSocket подключение (одно на все кошельки)
-│   ├── parser.py           # парсинг webData2 / orderUpdates / userFills
+│   ├── parser.py           # парсинг clearinghouseState / orderUpdates / userFills
 │   ├── rest.py             # REST /info (portfolio PnL, TWAP fills)
 │   └── detector.py         # детектор аномалий (sliding window)
 ├── bot/                    # Telegram-слой
@@ -146,10 +146,10 @@ sudo journalctl -u hl-tracker -f
 ## Как это работает
 
 - При старте бот подключается к `wss://api.hyperliquid.xyz/ws` одним
-  WebSocket-соединением и подписывается на `webData2`, `orderUpdates` и
-  `userFills` для каждого уникального активного адреса из БД (если несколько
-  юзеров следят за одним адресом — подписка одна, refcount).
-- `webData2` — это снапшот состояния аккаунта (позиции, ордера, балансы).
+  WebSocket-соединением и подписывается на `clearinghouseState`, `openOrders`,
+  `orderUpdates` и `userFills` для каждого уникального активного адреса из БД
+  (если несколько юзеров следят за одним адресом — подписка одна, refcount).
+- `clearinghouseState` — это снапшот состояния аккаунта (позиции, баланс).
   Бот сравнивает каждый новый снапшот с предыдущим и детектирует
   открытие/закрытие позиций.
 - Каждое событие раздаётся всем подписчикам адреса; для каждого применяются
@@ -215,8 +215,8 @@ ps aux | grep main.py
 - Бот работает только в режиме *read-only* — он ничего не торгует и не
   перемещает средства.
 - PnL для закрытий берётся из `userFills` (точный `closedPnl`), с
-  fallback на `unrealizedPnl` из `webData2`.
+  fallback на `unrealizedPnl` из `clearinghouseState`.
 - Лимит на размер сообщений Telegram — 4096 символов; форматтеры это
   учитывают.
 - Лимит Hyperliquid ≈1000 WS-подписок с одного IP; каждый уникальный
-  адрес = 3 подписки. `/admin` показывает текущее приближение к лимиту.
+  адрес = 4 подписки. `/admin` показывает текущее приближение к лимиту.

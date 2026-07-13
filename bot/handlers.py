@@ -295,7 +295,7 @@ class Handlers:
         if user.chat_id != config.ADMIN_CHAT_ID:
             return
         stats = await self.storage.count_stats()
-        subs = stats["unique_active_addresses"] * 3
+        subs = stats["unique_active_addresses"] * 4
         await _reply(
             update,
             "🛠 <b>Admin</b>\n"

@@ -18,6 +18,7 @@ from .parser import (
     OrderEvent,
     PositionEvent,
     PositionSnapshot,
+    _f,
     diff_positions,
     parse_account_state,
     parse_order_updates,
@@ -123,6 +124,11 @@ class HyperliquidWS:
                     self._connected.set()
                     log.info("WebSocket connected: %s", self.url)
                     delay = self.reconnect_delay  # reset backoff
+
+                    # Mid prices — one global subscription, not per wallet, so
+                    # it costs nothing against the per-IP subscription limit.
+                    await self._send({"method": "subscribe",
+                                      "subscription": {"type": "allMids"}})
 
                     # (re)subscribe every wallet
                     for addr in list(self._wallets):
@@ -265,6 +271,11 @@ class HyperliquidWS:
                         await self.on_fill(ev)
                     except Exception:
                         log.exception("on_fill handler failed")
+
+        elif channel == "allMids":
+            # {"mids": {"BTC": "65300.0", ...}} — prices arrive as strings.
+            for coin, px in (data.get("mids") or {}).items():
+                self._mids[coin] = _f(px)
 
         elif channel == "subscriptionResponse":
             log.debug("subscribed: %s", data)

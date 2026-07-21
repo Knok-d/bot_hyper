@@ -81,13 +81,16 @@ async def test_reconnect_resubscribes():
         sub_types = set()
         for p in parsed:
             if p.get("method") == "subscribe":
-                sub_types.add(p["subscription"]["type"])
-                sub_users.add(p["subscription"]["user"])
+                sub = p["subscription"]
+                sub_types.add(sub["type"])
+                if "user" in sub:  # allMids is global — no user field
+                    sub_users.add(sub["user"])
 
         assert "clearinghouseState" in sub_types
         assert "openOrders" in sub_types
         assert "orderUpdates" in sub_types
         assert "userFills" in sub_types
+        assert "allMids" in sub_types  # global, re-armed on every reconnect
         assert len(sub_users) == 2
 
 
@@ -160,3 +163,51 @@ async def test_priming_suppresses_events():
     )
     assert positions_received[0].kind == "open"
     assert positions_received[0].coin == "ETH"
+
+
+async def test_all_mids_feeds_order_current_price():
+    """allMids should populate the mid cache and reach OrderEvent.current_price."""
+    orders_received: list = []
+
+    async def on_pos(ev):
+        pass
+
+    async def on_ord(ev):
+        orders_received.append(ev)
+
+    wallet = "0x" + "a" * 40
+
+    # Clears priming, so the orderUpdates below is treated as live.
+    prime = json.dumps({
+        "channel": "clearinghouseState",
+        "data": {"dex": "", "user": wallet,
+                 "clearinghouseState": {"assetPositions": []}},
+    })
+    mids = json.dumps({
+        "channel": "allMids",
+        "data": {"mids": {"BTC": "65300.0", "ETH": "3180.0"}},
+    })
+    order = json.dumps({
+        "channel": "orderUpdates",
+        "user": wallet,
+        "data": [{"order": {"coin": "BTC", "side": "B", "limitPx": "64000",
+                            "sz": "1.0", "oid": 777}, "status": "open"}],
+    })
+
+    @asynccontextmanager
+    async def fake_connect(*args, **kwargs):
+        yield FakeWS([prime, mids, order])
+
+    client = HyperliquidWS(url="wss://fake", on_position=on_pos, on_order=on_ord)
+    await client.add_wallet(wallet, "test")
+
+    async def run_then_stop():
+        await asyncio.sleep(0.2)
+        client.stop()
+
+    with patch("hl_monitor.client.websockets.connect", side_effect=fake_connect):
+        await asyncio.gather(client.run(), run_then_stop())
+
+    assert client._mids["BTC"] == 65300.0
+    assert len(orders_received) == 1
+    assert orders_received[0].current_price == 65300.0

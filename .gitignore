@@ -8,6 +8,7 @@ __pycache__/
 venv/
 .idea/
 .vscode/
+.claude/
 .pytest_cache/
 .DS_Store
 *.db.bak*

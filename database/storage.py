@@ -83,6 +83,10 @@ class Storage:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         await self._migrate_if_needed(legacy_owner_chat_id)
         async with aiosqlite.connect(self.db_path) as db:
+            # Every query opens its own connection, so readers and the writer
+            # overlap constantly; WAL keeps them from blocking each other.
+            # Persisted in the db file — setting it once here is enough.
+            await db.execute("PRAGMA journal_mode=WAL")
             with open(self.schema_path, "r", encoding="utf-8") as f:
                 await db.executescript(f.read())
             await db.commit()

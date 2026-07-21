@@ -47,10 +47,6 @@ bot_hyper/
     └── schema.sql          # users / wallets / positions / orders / history
 ```
 
-> Папка с Hyperliquid-логикой называется `hl_monitor`, а не `hyperliquid`,
-> чтобы не конфликтовать с пакетом `hyperliquid-python-sdk` (он импортируется
-> как `hyperliquid`).
-
 ## Установка
 
 Требуется Python 3.11+.

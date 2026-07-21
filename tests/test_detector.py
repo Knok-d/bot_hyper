@@ -44,6 +44,27 @@ def test_does_not_fire_after_window_expires():
         assert r is None
 
 
+def test_refreshed_wallet_does_not_revive_stale_entries():
+    """A wallet re-opening must not keep older entries alive past the window."""
+    d = AnomalyDetector(window_sec=300, min_wallets=2)
+    t0 = 1_700_000_000  # offset from 0 so the cooldown check isn't pre-armed
+    with patch("hl_monitor.detector.time") as mock_time:
+        mock_time.time.return_value = t0
+        d.record_open(WALLET_A, "Alice", "BTC", "LONG", 10000)
+
+        mock_time.time.return_value = t0 + 100
+        assert d.record_open(WALLET_B, "Bob", "BTC", "LONG", 20000) is not None
+
+        # Alice re-opens; her entry is refreshed but must not shield Bob's
+        # from the purge that follows.
+        mock_time.time.return_value = t0 + 250
+        d.record_open(WALLET_A, "Alice", "BTC", "LONG", 10000)
+
+        # Bob last acted at t0+100 — 400s ago, outside the 300s window.
+        mock_time.time.return_value = t0 + 500
+        assert d.record_open(WALLET_A, "Alice", "BTC", "LONG", 10000) is None
+
+
 def test_cooldown_prevents_rapid_fire():
     d = AnomalyDetector(window_sec=300, min_wallets=2)
 

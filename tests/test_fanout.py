@@ -99,6 +99,35 @@ async def test_fill_aggregation_per_user_threshold(bot):
     assert (USER_EN, WALLET, "ETH", "BUY") in bot._fill_agg
 
 
+async def test_stale_buffer_is_flushed_below_threshold(bot):
+    """A buffer that goes quiet must be delivered even if it never hit the threshold."""
+    import time
+
+    import config
+
+    fill = FillEvent(
+        wallet=WALLET, coin="ETH", side="BUY",
+        size=1.0, price=3000, closed_pnl=0, fee=1.0,
+        timestamp=int(time.time()), oid=1,
+    )  # $3K — under both users' thresholds
+    await bot._on_fill_event(fill)
+    assert bot.sent == []
+    key_ru = (USER_RU, WALLET, "ETH", "BUY")
+    assert key_ru in bot._fill_agg
+
+    # Not stale yet — nothing goes out.
+    await bot._flush_stale_aggs()
+    assert bot.sent == []
+
+    # Backdate the buffers past the quiet period.
+    for agg in bot._fill_agg.values():
+        agg["last_ts"] -= config.FILL_AGG_FLUSH_SEC + 1
+    await bot._flush_stale_aggs()
+
+    assert sorted(cid for cid, _ in bot.sent) == [USER_RU, USER_EN]
+    assert bot._fill_agg == {}
+
+
 async def test_unsubscribe_refcounts_ws(bot):
     await bot._unsubscribe(USER_RU, WALLET)
     assert WALLET in bot.subscribers  # EN still subscribed

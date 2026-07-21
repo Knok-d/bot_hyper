@@ -52,16 +52,17 @@ class AnomalyDetector:
         while buf and now - buf[0].ts > self.window_sec:
             buf.popleft()
 
-        # don't double-count same wallet inside window
+        # don't double-count same wallet inside window — drop the old entry and
+        # re-append, so the deque stays sorted by ts (the purge above relies on
+        # it; refreshing in place would leave a fresh entry at the head and
+        # shield genuinely stale ones behind it from ever being purged).
+        addr = wallet.lower()
         for r in buf:
-            if r.wallet.lower() == wallet.lower():
-                # update notional/timestamp but don't add a new entry
-                r.notional = notional
-                r.ts = now
+            if r.wallet == addr:
+                buf.remove(r)
                 break
-        else:
-            buf.append(_Recent(wallet=wallet.lower(), label=label,
-                               notional=notional, ts=now))
+        buf.append(_Recent(wallet=addr, label=label,
+                           notional=notional, ts=now))
 
         if len({r.wallet for r in buf}) < self.min_wallets:
             return None

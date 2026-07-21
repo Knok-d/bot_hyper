@@ -298,7 +298,7 @@ class Bot:
             log.exception("attach position avg failed")
 
     async def _flush_loop(self) -> None:
-        """Periodically flush stale fill aggregations that haven't crossed the threshold."""
+        """Wake every 60s and flush aggregation buffers that have gone quiet."""
         while not self._stop_flush.is_set():
             try:
                 await asyncio.wait_for(self._stop_flush.wait(), timeout=60)
@@ -306,31 +306,37 @@ class Bot:
                 pass
             else:
                 return
-            now = int(time.time())
-            stale: list[tuple[int, str, str, str]] = []
-            for k, a in self._fill_agg.items():
-                if now - a["last_ts"] <= config.FILL_AGG_FLUSH_SEC:
-                    continue
-                user = await self.users.get(k[0])
-                if user and a["total_notional"] >= user.fill_agg_threshold:
-                    stale.append(k)
-            for k in stale:
-                agg = self._fill_agg.pop(k, None)
-                if not agg:
-                    continue
-                self._attach_position_avg(agg)
-                chat_id, wallet = k[0], k[1]
-                user = await self.users.get(chat_id)
-                if not user:
-                    continue
-                label = (self.labels.get((chat_id, wallet))
-                         or short_addr(wallet))
-                try:
-                    await self._send(
-                        chat_id,
-                        format_fills_aggregated(user.lang, agg, label))
-                except Exception:
-                    log.exception("flush send failed")
+            await self._flush_stale_aggs()
+
+    async def _flush_stale_aggs(self) -> None:
+        """Send buffers with no new fills for FILL_AGG_FLUSH_SEC, whatever the total.
+
+        No size check here on purpose: anything still buffered is by
+        construction *below* the user's threshold, since crossing it sends and
+        deletes the buffer immediately in _on_fill_event.
+        """
+        now = int(time.time())
+        stale: list[tuple[int, str, str, str]] = [
+            k for k, a in self._fill_agg.items()
+            if now - a["last_ts"] > config.FILL_AGG_FLUSH_SEC
+        ]
+        for k in stale:
+            agg = self._fill_agg.pop(k, None)
+            if not agg:
+                continue
+            self._attach_position_avg(agg)
+            chat_id, wallet = k[0], k[1]
+            user = await self.users.get(chat_id)
+            if not user:
+                continue
+            label = (self.labels.get((chat_id, wallet))
+                     or short_addr(wallet))
+            try:
+                await self._send(
+                    chat_id,
+                    format_fills_aggregated(user.lang, agg, label))
+            except Exception:
+                log.exception("flush send failed")
 
     async def _on_order_event(self, ev: OrderEvent) -> None:
         wallet = ev.wallet.lower()

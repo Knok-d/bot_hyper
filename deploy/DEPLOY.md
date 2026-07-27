@@ -19,7 +19,7 @@
 С твоего Mac:
 
 ```bash
-cd /Users/dmitry/Documents/Claude/Projects
+cd ~/projects   # каталог, где лежит bot_hyper
 # Замени HOST на IP сервера
 scp -r bot_hyper root@HOST:/tmp/
 ```

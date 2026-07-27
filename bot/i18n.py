@@ -75,11 +75,11 @@ CATALOG: dict[str, dict[str, str]] = {
     "add.prompt": {
         "ru": ("➕ <b>Добавление кошелька</b>\n\n"
                "Отправьте сообщение в формате:\n<code>0x... [метка]</code>\n\n"
-               "Пример:\n<code>0x84b36f07a6547b1d6a2414240db69d9bbd0ee01f Whale1</code>\n\n"
+               "Пример:\n<code>0xaabbccdd00112233445566778899aabbccddeeff Whale1</code>\n\n"
                "Метка — необязательна."),
         "en": ("➕ <b>Add a wallet</b>\n\n"
                "Send a message in the format:\n<code>0x... [label]</code>\n\n"
-               "Example:\n<code>0x84b36f07a6547b1d6a2414240db69d9bbd0ee01f Whale1</code>\n\n"
+               "Example:\n<code>0xaabbccdd00112233445566778899aabbccddeeff Whale1</code>\n\n"
                "The label is optional."),
     },
     "rename.prompt": {
